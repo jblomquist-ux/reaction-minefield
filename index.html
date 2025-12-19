@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Reaction Minefield</title>
+  <style>
+    :root{
+      --tileW: clamp(220px, 22vmin, 320px);
+      --tileH: clamp(62px, 9vmin, 88px);
+      --gap: clamp(10px, 1.4vmin, 16px);
+
+      --panel: rgba(10,10,12,0.70);
+      --panel2: rgba(10,10,12,0.82);
+      --stroke: rgba(255,255,255,0.10);
+      --text: rgba(235,235,235,0.92);
+      --muted: rgba(210,210,210,0.78);
+
+      --glowRed: #ff2a2a;
+      --glowBlue: #6fd3ff;
+      --glowGreen: #27ff6a;
+    }
+
+    *{ box-sizing: border-box; }
+    html,body{ height:100%; margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+
+    body{
+      overflow:hidden;
+      color: var(--text);
+      background:
+        radial-gradient(1200px 700px at 50% 40%, rgba(0,0,0,0.25), rgba(0,0,0,0.78)),
+        url("lava_background.png");
+      background-size: cover;
+      background-position: center;
+    }
+
+    .hud{
+      position: fixed;
+      top: 16px;
+      left: 16px;
+      right: 16px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap: 12px;
+      z-index: 20;
+      pointer-events:none;
+    }
+
+    .hud .pill{
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: var(--panel);
+      border: 1px solid var(--stroke);
+      backdrop-filter: blur(6px);
+      box-shadow: 0 10px 24px rgba(0,0,0,0.35);
+      display:flex;
+      gap: 10px;
+      align-items:center;
+      font-weight:600;
+      letter-spacing: 0.2px;
+    }
+    .hud small{
+      font-weight:600;
+      color: rgba(255,255,255,0.65);
+    }
+    .hud .target{
+      color: rgba(255,255,255,0.92);
+      text-shadow: 0 0 10px rgba(111,211,255,0.35);
+    }
+
+    .stage{
+      height: 100%;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding: 82px 16px 24px;
+    }
+
+    /* Wider board to hold 5 wide tiles */
+    .board-wrap{
+      width: min(calc(var(--tileW) * 5 + var(--gap) * 4 + 28px), 96vw);
+      background: rgba(0,0,0,0.30);
+      border: 1px solid rgba(255,255,255,0.08);
+      box-shadow: 0 24px 80px rgba(0,0,0,0.55);
+      backdrop-filter: blur(3px);
+      border-radius: 18px;
+      padding: 14px;
+    }
+
+    .grid{
+      display:grid;
+      grid-template-columns: repeat(5, var(--tileW));
+      grid-auto-rows: var(--tileH);
+      gap: var(--gap);
+      justify-content: center;
+      align-content: center;
+    }
+
+    /* responsive fallback: shrink tiles if viewport is too small */
+    @media (max-width: 1200px){
+      :root{ --tileW: clamp(170px, 18.5vmin, 260px); }
+    }
+    @media (max-width: 900px){
+      :root{ --tileW: clamp(135px, 17vmin, 210px); }
+    }
+
+    .tile{
+      user-select:none;
+      cursor:pointer;
+      border-radius: 14px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.11), rgba(255,255,255,0.05)),
+        radial-gradient(140px 90px at 30% 20%, rgba(255,190,120,0.12), rgba(0,0,0,0.0)),
+        rgba(10,10,12,0.68);
+      border: 1px solid rgba(255,255,255,0.12);
+      box-shadow:
+        0 10px 18px rgba(0,0,0,0.45),
+        inset 0 1px 0 rgba(255,255,255,0.10);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding: 8px 12px;
+      text-align:center;
+      line-height: 1.1;
+      font-weight: 800;
+      font-size: clamp(12px, 1.45vmin, 15px);
+      letter-spacing: 0.2px;
+
+      transform: translateY(-90px);
+      opacity: 0;
+    }
+
+    /* keep reaction on one line */
+    .tile .eq{
+      width: 100%;
+      display:block;
+      white-space: normal;
+      overflow: visible;
+      text-overflow: unset;
+      color: rgba(245,245,245,0.93);
+      text-shadow: 0 0 10px rgba(255,160,60,0.18);
+    }
+
+    .tile:hover{
+      transform: translateY(0) scale(1.02);
+      transition: transform 120ms ease, box-shadow 120ms ease;
+      box-shadow:
+        0 14px 24px rgba(0,0,0,0.55),
+        0 0 22px rgba(255,130,40,0.12),
+        inset 0 1px 0 rgba(255,255,255,0.12);
+    }
+
+    .tile.settle-in{
+      animation: dropIn 520ms cubic-bezier(.16,.9,.23,1.1) forwards;
+    }
+    @keyframes dropIn{
+      0%   { transform: translateY(-90px) scale(0.98); opacity: 0; }
+      70%  { transform: translateY(6px) scale(1.01); opacity: 1; }
+      100% { transform: translateY(0) scale(1); opacity: 1; }
+    }
+
+    .tile.exiting-down{
+      pointer-events:none;
+      animation: exitDown 520ms cubic-bezier(.2,.9,.2,1) forwards;
+    }
+    @keyframes exitDown{
+      to { transform: translateY(140vh) scale(0.98); opacity: 0; }
+    }
+
+    /* Correct tile: green glow, locked */
+    .tile.correct{
+      cursor: default;
+      border-color: rgba(39,255,106,0.55);
+      box-shadow:
+        0 12px 26px rgba(0,0,0,0.55),
+        0 0 26px rgba(39,255,106,0.35),
+        inset 0 0 0 2px rgba(39,255,106,0.12);
+      background:
+        linear-gradient(180deg, rgba(39,255,106,0.18), rgba(255,255,255,0.04)),
+        rgba(10,10,12,0.70);
+    }
+    .tile.correct .eq{
+      color: rgba(220,255,235,0.98);
+      text-shadow:
+        0 0 10px rgba(39,255,106,0.55),
+        0 0 22px rgba(39,255,106,0.22);
+    }
+
+    /* Instruction modal */
+    .modal-backdrop{
+      position: fixed;
+      inset: 0;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background: rgba(0,0,0,0.55);
+      opacity: 0;
+      pointer-events:none;
+      z-index: 50;
+      transition: opacity 220ms ease;
+    }
+    .modal-backdrop.show{
+      opacity: 1;
+      pointer-events:auto;
+    }
+    .modal{
+      width: min(560px, 92vw);
+      border-radius: 18px;
+      padding: 18px 18px 16px;
+      background: var(--panel2);
+      border: 1px solid rgba(255,255,255,0.12);
+      box-shadow: 0 22px 70px rgba(0,0,0,0.65);
+      transform: translateY(8px) scale(0.98);
+      transition: transform 220ms ease;
+      text-align: center; /* <- center everything */
+    }
+    .modal-backdrop.show .modal{
+      transform: translateY(0) scale(1);
+    }
+    .modal h2{
+      margin: 0 0 10px;
+      font-size: 26px;
+      letter-spacing: 0.6px;
+      color: var(--glowRed);
+      text-shadow:
+        0 0 10px rgba(255,42,42,0.65),
+        0 0 26px rgba(255,42,42,0.25);
+    }
+    .modal p{
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-weight: 650;
+      line-height: 1.35;
+    }
+    .modal .btnrow{
+      display:flex;
+      justify-content:center; /* <- center button row */
+    }
+
+    button{
+      appearance:none;
+      border: 0;
+      cursor:pointer;
+      padding: 10px 18px;
+      border-radius: 12px;
+      font-weight: 900;
+      letter-spacing: 0.2px;
+      color: rgba(255,255,255,0.92);
+      background: rgba(255,255,255,0.10);
+      border: 1px solid rgba(255,255,255,0.18);
+      box-shadow: 0 10px 20px rgba(0,0,0,0.35);
+    }
+    button:hover{
+      background: rgba(255,255,255,0.14);
+    }
+    .btn-primary{
+      background: rgba(111,211,255,0.16);
+      border-color: rgba(111,211,255,0.35);
+    }
+    .btn-primary:hover{
+      background: rgba(111,211,255,0.22);
+      box-shadow: 0 0 22px rgba(111,211,255,0.18);
+    }
+
+    /* Explosion overlay */
+    .explosion{
+      position: fixed;
+      inset: 0;
+      pointer-events:none;
+      opacity: 0;
+      z-index: 80;
+      background:
+        radial-gradient(300px 300px at 50% 55%, rgba(255,235,160,0.95), rgba(255,120,40,0.75), rgba(0,0,0,0.0) 70%),
+        radial-gradient(900px 700px at 50% 55%, rgba(255,80,40,0.45), rgba(0,0,0,0.65));
+      mix-blend-mode: screen;
+    }
+    .explosion.boom{
+      animation: boom 720ms ease forwards;
+    }
+    @keyframes boom{
+      0%   { opacity: 0; transform: scale(0.98); }
+      10%  { opacity: 1; transform: scale(1.02); }
+      55%  { opacity: 0.75; transform: scale(1.03); }
+      100% { opacity: 0; transform: scale(1.05); }
+    }
+
+    .shake{
+      animation: shake 520ms ease;
+    }
+    @keyframes shake{
+      0%{ transform: translate(0,0); }
+      15%{ transform: translate(-8px, 4px); }
+      30%{ transform: translate(7px, -5px); }
+      45%{ transform: translate(-6px, -3px); }
+      60%{ transform: translate(6px, 5px); }
+      75%{ transform: translate(-4px, 2px); }
+      100%{ transform: translate(0,0); }
+    }
+
+    /* Congrats overlay */
+    .congrats{
+      position: fixed;
+      inset: 0;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background: rgba(0,0,0,0.68);
+      opacity: 0;
+      pointer-events:none;
+      z-index: 90;
+      transition: opacity 220ms ease;
+      text-align:center;
+    }
+    .congrats.show{
+      opacity: 1;
+      pointer-events:auto;
+    }
+    .congrats .panel{
+      width: min(560px, 92vw);
+      border-radius: 20px;
+      padding: 20px 18px 16px;
+      background: rgba(10,10,12,0.86);
+      border: 1px solid rgba(255,255,255,0.14);
+      box-shadow: 0 26px 90px rgba(0,0,0,0.75);
+    }
+    .congrats h1{
+      margin: 0 0 8px;
+      font-size: 30px;
+      color: rgba(255,255,255,0.95);
+      text-shadow: 0 0 24px rgba(111,211,255,0.25);
+    }
+    .congrats p{
+      margin: 0 0 16px;
+      color: rgba(220,220,220,0.82);
+      font-weight: 650;
+      line-height: 1.35;
+    }
+    .congrats .btnrow{
+      display:flex;
+      justify-content:center;
+      gap: 10px;
+    }
+
+    .locked .tile{ pointer-events:none; }
+
+    .hint{
+      position: fixed;
+      bottom: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 12px;
+      color: rgba(255,255,255,0.55);
+      background: rgba(0,0,0,0.25);
+      border: 1px solid rgba(255,255,255,0.10);
+      padding: 7px 10px;
+      border-radius: 999px;
+      backdrop-filter: blur(6px);
+      z-index: 15;
+      pointer-events:none;
+      text-align:center;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="hud">
+    <div class="pill">
+      <span>Reaction Minefield</span>
+      <small>|</small>
+      <span>Level <span id="levelNum">1</span>/5</span>
+    </div>
+    <div class="pill">
+      <small>Eliminate:</small>
+      <span class="target" id="targetName">Synthesis</span>
+      <small>Remaining:</small>
+      <span class="target" id="remainingCount">5</span>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="board-wrap" id="boardWrap">
+      <div class="grid" id="grid"></div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modalBackdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <h2 id="modalTitle">Level One</h2>
+      <p id="modalText">To safely get across, eliminate the synthesis reactions by selecting them.</p>
+      <div class="btnrow">
+        <button class="btn-primary" id="modalOk">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="explosion" id="explosion"></div>
+
+  <div class="congrats" id="congrats">
+    <div class="panel">
+      <h1>Congratulations!</h1>
+      <p>You cleared the minefield and identified every reaction type correctly.</p>
+      <div class="btnrow">
+        <button class="btn-primary" id="continueBtn">Continue</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="hint">Click only the target reaction type each level — one mistake detonates the field.</div>
+
+  <script>
+    const BANK = {
+      synthesis: [
+        "2H₂ + O₂ → 2H₂O","N₂ + 3H₂ → 2NH₃","2Na + Cl₂ → 2NaCl","Ca + O₂ → CaO","2Mg + O₂ → 2MgO",
+        "Fe + S → FeS","2Al + 3Cl₂ → 2AlCl₃","C + O₂ → CO₂","2K + Br₂ → 2KBr","Zn + S → ZnS",
+        "Ca + Cl₂ → CaCl₂","2Li + F₂ → 2LiF","2Na + O₂ → Na₂O","P₄ + 5O₂ → P₄O₁₀","2Fe + O₂ → 2FeO",
+        "SO₂ + O₂ → 2SO₃","CaO + CO₂ → CaCO₃","H₂ + Cl₂ → 2HCl","Mg + N₂ → Mg₃N₂","2NO + O₂ → 2NO₂"
+      ],
+      decomposition: [
+        "2H₂O → 2H₂ + O₂","2H₂O₂ → 2H₂O + O₂","CaCO₃ → CaO + CO₂","2KClO₃ → 2KCl + 3O₂","2HgO → 2Hg + O₂",
+        "NH₄NO₃ → N₂O + 2H₂O","2NaHCO₃ → Na₂CO₃ + H₂O + CO₂","2Ag₂O → 4Ag + O₂","CuCO₃ → CuO + CO₂",
+        "Pb(NO₃)₂ → PbO + 2NO₂ + O₂","2NaN₃ → 2Na + 3N₂","ZnCO₃ → ZnO + CO₂","2Al(OH)₃ → Al₂O₃ + 3H₂O",
+        "Ca(OH)₂ → CaO + H₂O","2Fe(OH)₃ → Fe₂O₃ + 3H₂O","2NaCl → 2Na + Cl₂","MgCO₃ → MgO + CO₂",
+        "2HNO₃ → 2NO₂ + H₂O + O₂","BaCO₃ → BaO + CO₂","2Cu(NO₃)₂ → 2CuO + 4NO₂ + O₂"
+      ],
+      single: [
+        "Cl₂ + 2KBr → 2KCl + Br₂","F₂ + 2NaCl → 2NaF + Cl₂","Br₂ + 2KI → 2KBr + I₂","Cl₂ + 2NaI → 2NaCl + I₂",
+        "Zn + CuSO₄ → ZnSO₄ + Cu","Fe + CuCl₂ → FeCl₂ + Cu","Mg + FeCl₃ → MgCl₂ + Fe","Al + Fe₂O₃ → Al₂O₃ + Fe",
+        "Cu + 2AgNO₃ → Cu(NO₃)₂ + 2Ag","Pb + CuCl₂ → PbCl₂ + Cu","Ca + 2H₂O → Ca(OH)₂ + H₂","Na + H₂O → NaOH + H₂",
+        "Zn + 2HCl → ZnCl₂ + H₂","Fe + 2HCl → FeCl₂ + H₂","Mg + 2H₂O → Mg(OH)₂ + H₂","Al + 3CuCl₂ → 2AlCl₃ + 3Cu",
+        "Zn + 2HNO₃ → Zn(NO₃)₂ + H₂","Fe + H₂SO₄ → FeSO₄ + H₂","K + H₂O → KOH + H₂"
+      ],
+      double: [
+        "AgNO₃ + NaCl → AgCl(s) + NaNO₃","BaCl₂ + Na₂SO₄ → BaSO₄(s) + 2NaCl","Pb(NO₃)₂ + 2KI → PbI₂(s) + 2KNO₃",
+        "CaCl₂ + Na₂CO₃ → CaCO₃(s) + 2NaCl","FeCl₃ + 3NaOH → Fe(OH)₃(s) + 3NaCl","HCl + NaOH → NaCl + H₂O",
+        "H₂SO₄ + 2KOH → K₂SO₄ + 2H₂O","HNO₃ + Ca(OH)₂ → Ca(NO₃)₂ + 2H₂O","H₃PO₄ + 3NaOH → Na₃PO₄ + 3H₂O",
+        "HCl + NH₄OH → NH₄Cl + H₂O","CuSO₄ + 2NaOH → Cu(OH)₂(s) + Na₂SO₄","Zn(NO₃)₂ + Na₂S → ZnS(s) + 2NaNO₃",
+        "AlCl₃ + 3NaOH → Al(OH)₃(s) + 3NaCl","MgSO₄ + Na₂CO₃ → MgCO₃(s) + Na₂SO₄","Ba(NO₃)₂ + Na₂CO₃ → BaCO₃(s) + 2NaNO₃"
+      ],
+      combustion: [
+        "CH₄ + 2O₂ → CO₂ + 2H₂O","2C₂H₆ + 7O₂ → 4CO₂ + 6H₂O","C₃H₈ + 5O₂ → 3CO₂ + 4H₂O",
+        "2C₄H₁₀ + 13O₂ → 8CO₂ + 10H₂O","2C₂H₂ + 5O₂ → 4CO₂ + 2H₂O","C₆H₆ + 15/2O₂ → 6CO₂ + 3H₂O",
+        "C₆H₁₂ + 9O₂ → 6CO₂ + 6H₂O","C₇H₁₆ + 11O₂ → 7CO₂ + 8H₂O","2C₈H₁₈ + 25O₂ → 16CO₂ + 18H₂O",
+        "C₉H₂₀ + 14O₂ → 9CO₂ + 10H₂O","2CH₃OH + 3O₂ → 2CO₂ + 4H₂O","C₂H₅OH + 3O₂ → 2CO₂ + 3H₂O",
+        "2C₃H₇OH + 9O₂ → 6CO₂ + 8H₂O","C₆H₁₂O₆ + 6O₂ → 6CO₂ + 6H₂O"
+      ]
+    };
+
+    const LEVELS = [
+      { key: "synthesis",     label: "Synthesis",            title: "Level One",   text: "To safely get across, eliminate the synthesis reactions by selecting them." },
+      { key: "decomposition", label: "Decomposition",        title: "Level Two",   text: "To safely get across, eliminate the decomposition reactions by selecting them." },
+      { key: "single",        label: "Single Displacement",  title: "Level Three", text: "To safely get across, eliminate the single displacement reactions by selecting them." },
+      { key: "double",        label: "Double Displacement",  title: "Level Four",  text: "To safely get across, eliminate the double displacement reactions by selecting them." },
+      { key: "combustion",    label: "Combustion",           title: "Level Five",  text: "To safely get across, eliminate the combustion reactions by selecting them." }
+    ];
+
+    const grid = document.getElementById("grid");
+    const boardWrap = document.getElementById("boardWrap");
+    const levelNumEl = document.getElementById("levelNum");
+    const targetNameEl = document.getElementById("targetName");
+    const remainingCountEl = document.getElementById("remainingCount");
+
+    const modalBackdrop = document.getElementById("modalBackdrop");
+    const modalTitle = document.getElementById("modalTitle");
+    const modalText = document.getElementById("modalText");
+    const modalOk = document.getElementById("modalOk");
+
+    const explosion = document.getElementById("explosion");
+    const congrats = document.getElementById("congrats");
+    const continueBtn = document.getElementById("continueBtn");
+
+    let levelIndex = 0;
+    let targetKey = LEVELS[0].key;
+    let targetRemaining = 5;
+    let locked = false;
+
+    function shuffle(arr){
+      const a = arr.slice();
+      for(let i=a.length-1; i>0; i--){
+        const j = Math.floor(Math.random()*(i+1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+      return a;
+    }
+    function sampleN(arr, n){ return shuffle(arr).slice(0, n); }
+
+    function setLocked(v){
+      locked = v;
+      document.body.classList.toggle("locked", v);
+    }
+
+    function showModalForLevel(idx){
+      const L = LEVELS[idx];
+      modalTitle.textContent = L.title;
+      modalText.textContent = L.text;
+      modalBackdrop.classList.add("show");
+      modalBackdrop.setAttribute("aria-hidden","false");
+    }
+    function hideModal(){
+      modalBackdrop.classList.remove("show");
+      modalBackdrop.setAttribute("aria-hidden","true");
+    }
+
+    function updateHUD(){
+      levelNumEl.textContent = (levelIndex + 1);
+      targetNameEl.textContent = LEVELS[levelIndex].label;
+      remainingCountEl.textContent = String(targetRemaining);
+    }
+
+    function buildBoardTiles(){
+      const items = [];
+      items.push(...sampleN(BANK.synthesis, 5).map(eq => ({type:"synthesis", eq})));
+      items.push(...sampleN(BANK.decomposition, 5).map(eq => ({type:"decomposition", eq})));
+      items.push(...sampleN(BANK.single, 5).map(eq => ({type:"single", eq})));
+      items.push(...sampleN(BANK.double, 5).map(eq => ({type:"double", eq})));
+      items.push(...sampleN(BANK.combustion, 5).map(eq => ({type:"combustion", eq})));
+      return shuffle(items);
+    }
+
+    function renderBoard(dropFromTop=true){
+      grid.innerHTML = "";
+      targetKey = LEVELS[levelIndex].key;
+      targetRemaining = 5;
+      updateHUD();
+
+      const tiles = buildBoardTiles();
+
+      tiles.forEach((t, i) => {
+        const tile = document.createElement("div");
+        tile.className = "tile";
+        tile.dataset.type = t.type;
+        tile.dataset.eq = t.eq;
+        tile.style.animationDelay = (dropFromTop ? (i * 16) : 0) + "ms";
+        tile.innerHTML = `<span class="eq">${t.eq}</span>`;
+        tile.addEventListener("click", () => handleTileClick(tile));
+        grid.appendChild(tile);
+        requestAnimationFrame(() => tile.classList.add("settle-in"));
+      });
+
+      const settleMs = dropFromTop ? (tiles.length * 16 + 560) : 250;
+      setLocked(true);
+      setTimeout(() => {
+        setLocked(false);
+        showModalForLevel(levelIndex);
+      }, settleMs);
+    }
+
+    function handleTileClick(tile){
+      if(locked) return;
+
+      // already selected correct? ignore
+      if(tile.classList.contains("correct")) return;
+
+      const type = tile.dataset.type;
+
+      if(type === targetKey){
+        tile.classList.add("correct");
+        tile.style.pointerEvents = "none";
+        targetRemaining -= 1;
+        updateHUD();
+
+        if(targetRemaining === 0){
+          setLocked(true);
+          setTimeout(() => transitionToNextLevel(), 250);
+        }
+      } else {
+        detonateAndReset();
+      }
+    }
+
+    function detonateAndReset(){
+      if(locked) return;
+      setLocked(true);
+
+      explosion.classList.remove("boom");
+      void explosion.offsetWidth;
+      explosion.classList.add("boom");
+
+      boardWrap.classList.add("shake");
+      setTimeout(() => boardWrap.classList.remove("shake"), 520);
+
+      setTimeout(() => {
+        hideModal();
+        congrats.classList.remove("show");
+        levelIndex = 0;
+        setLocked(false);
+        renderBoard(true);
+      }, 720);
+    }
+
+    function transitionToNextLevel(){
+      hideModal();
+
+      const remainingTiles = Array.from(grid.querySelectorAll(".tile"));
+      remainingTiles.forEach((tile, i) => {
+        tile.classList.remove("settle-in");
+        tile.classList.add("exiting-down");
+        tile.style.animationDelay = (i * 12) + "ms";
+      });
+
+      const exitMs = remainingTiles.length * 12 + 560;
+
+      setTimeout(() => {
+        levelIndex += 1;
+
+        if(levelIndex >= LEVELS.length){
+          grid.innerHTML = "";
+          setLocked(false);
+          congrats.classList.add("show");
+          return;
+        }
+
+        setLocked(false);
+        renderBoard(true);
+      }, exitMs);
+    }
+
+    modalOk.addEventListener("click", () => hideModal());
+
+    continueBtn.addEventListener("click", () => {
+      // placeholder for later link
+      alert("Continue link placeholder — add your link in the code.");
+    });
+
+    renderBoard(true);
+  </script>
+</body>
+</html>
